@@ -1,5 +1,5 @@
 from gemini_API import GeminiAPI
-from Deepgram_STT_API import get_text
+from deepgram_STT_API import get_text
 from hotkeys import RobustHotkeyManager
 from recorder import record_audio
 from dotenv import load_dotenv
