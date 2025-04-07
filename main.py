@@ -1,119 +1,82 @@
-from google import genai
-import speech_recognition as sr
-import time
-from pynput import keyboard
-import pyttsx3
+from gemini_API import GeminiAPI
+from Deepgram_STT_API import get_text
+from hotkeys import RobustHotkeyManager
+from recorder import record_audio
 from dotenv import load_dotenv
+import time
+import subprocess
 import os
 
-# Load environment variables
-load_dotenv()
+# getting enviroment variables
+GEMINI_API_KEY= os.getenv('GEMINI_API_KEY')
+DEEPGRAM_API_KEY= os.getenv('DEEPGRAM_API_KEY')
+AUDIO_FILE= os.getenv('AUDIO_FILE')
 
-class VoiceAssistant:
-    def __init__(self):
-        self.is_listening = False
-        self.recognizer = sr.Recognizer()
-        self.microphone = sr.Microphone()
-        self.recognized_texts = []  # Store all recognized texts
-        self.ctrl_pressed = False
-        self.alt_pressed = False
-        self.win_pressed = False
-        self.should_stop = False
-        
-        # Initialize text-to-speech engine
-        self.engine = pyttsx3.init()
-        self.engine.setProperty('rate', 150)  # Speed of speech
-        
-        # Configure recognizer settings
-        self.recognizer.dynamic_energy_threshold = True
-        self.recognizer.energy_threshold = 300  # Increase sensitivity
-        self.recognizer.pause_threshold = 1.0  # Wait longer for speech to end
-        
-    def speak(self, text):
-        print(text)  # Still print for reference
-        self.engine.say(text)
-        self.engine.runAndWait()
 
-    def on_press(self, key):
+def send_notification(title, message):
+    if os.name != 'nt':
+        subprocess.run(['notify-send', title, message])
+        
+    
+    
+def run_new_prompt():
+    """Record audio, transcribe it, and get a response from Gemini."""
+    print("New Prompt started", "AI application has started a new Prompt")
+    
+    try:
+        # Record audio with ctrl+alt+s to stop
+        record_audio(filename=AUDIO_FILE, stop_hotkey=["ctrl", "alt", "s"])
+        
+        # Transcribe the audio
+        transcript = get_text(API_KEY=DEEPGRAM_API_KEY, AUDIO_FILE=AUDIO_FILE)
+
         try:
-            if key == keyboard.Key.ctrl_l or key == keyboard.Key.ctrl_r:
-                self.ctrl_pressed = True
-            elif key == keyboard.Key.alt_l or key == keyboard.Key.alt_r:
-                self.alt_pressed = True
-            elif key == keyboard.Key.cmd:  # Windows key
-                self.win_pressed = True
-            elif key == keyboard.Key.esc:
-                self.should_stop = True
-                self.is_listening = False
-                self.speak("Stopped listening.")
-                return False  # Stop the listener
-
-            # Check for Ctrl+Alt+Win combination
-            if self.ctrl_pressed and self.alt_pressed and self.win_pressed:
-                self.is_listening = True
-                self.speak("Started listening...")
-        except AttributeError:
+            os.remove(AUDIO_FILE)
+            print("file removed")
+        finally:
             pass
-
-    def on_release(self, key):
-        try:
-            if key == keyboard.Key.ctrl_l or key == keyboard.Key.ctrl_r:
-                self.ctrl_pressed = False
-            elif key == keyboard.Key.alt_l or key == keyboard.Key.alt_r:
-                self.alt_pressed = False
-            elif key == keyboard.Key.cmd:  # Windows key
-                self.win_pressed = False
-        except AttributeError:
-            pass
-
-    def start_listening(self):
-        with self.microphone as source:
-            print("Adjusting for ambient noise...")
-            self.recognizer.adjust_for_ambient_noise(source, duration=2)  # Longer adjustment
-            print("Press Ctrl+Alt+Win to start listening, Esc to stop...")
-            
-            # Start the keyboard listener
-            with keyboard.Listener(on_press=self.on_press, on_release=self.on_release) as listener:
-                while not self.should_stop:
-                    if self.is_listening:
-                        try:
-                            print("Listening...")
-                            audio = self.recognizer.listen(source, timeout=None, phrase_time_limit=50)  # No timeout, max 30 seconds per phrase
-                            text = self.recognizer.recognize_google(audio)
-                            print(f"You said: {text}")
-                            self.recognized_texts.append(text)  # Store the recognized text
-                        except sr.WaitTimeoutError:
-                            continue
-                        except sr.UnknownValueError:
-                            self.speak("B")
-                        except sr.RequestError as e:
-                            self.speak(f"Could not request results: exiting")
-                            exit()
-                    time.sleep(0.1)  # Reduce CPU usage
-
-        # After stopping, combine all texts and send to Gemini
-        if self.recognized_texts:
-            combined_text = " ".join(self.recognized_texts)
-            print("Sending all recognized text to Gemini...")
-            response = send_to_gemini(combined_text)
-            print("Gemini Response: " + response)
-            return combined_text
-        return None
-
-def send_to_gemini(text):
-    api_key = os.getenv('GEMINI_API_KEY')
-    if not api_key:
-        raise ValueError("GEMINI_API_KEY not found in environment variables")
         
-    client = genai.Client(api_key=api_key)
-    response = client.models.generate_content(
-        model="gemini-2.0-flash",
-        contents=text,
-    )
-    return response.text
+        if not transcript:
+            print("No transcript provided")
+            send_notification("AI Assistant", "No transcript detected")
+            return
+        
+        print("transcript: ", transcript)
+        
+        # Get response from Gemini
+        response = GeminiAPI.send_request(transcript, GEMINI_API_KEY=GEMINI_API_KEY)
+        print(response)
+        send_notification("AI Response", response)
+        print("prompt ended")
+        print("Press Ctrl + Alt + Win to start a new prompt")
+    except Exception as e:
+        print(f"Error in prompt processing: {e}")
 
+
+def main():
+    """Main function that sets up the hotkey manager and runs the program."""
+    print("AI Assistant starting...")
+    print("Press Ctrl+Alt+Win to start a new prompt")
+    
+    # Create hotkey manager
+    hotkey_manager = RobustHotkeyManager()
+    hotkey_manager.register("new_prompt", ["ctrl", "alt", "win"], run_new_prompt)
+    hotkey_manager.start(debug=False, persistent=True)
+    
+    try:
+        print("AI Assistant is running. Press Ctrl+C to exit.")
+        while hotkey_manager.running:
+            time.sleep(0.1)
+    except KeyboardInterrupt:
+        print("\nExiting AI Assistant...")
+    finally:
+        # Make sure to clean up
+        hotkey_manager.stop()
+
+    
 if __name__ == "__main__":
-    assistant = VoiceAssistant()
-    assistant.start_listening()
-
-
+    load_dotenv()
+    main()
+        
+        
+    
