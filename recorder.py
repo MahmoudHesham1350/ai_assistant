@@ -3,8 +3,9 @@ import numpy as np
 import wave
 import os
 import time
+import subprocess
 from dotenv import load_dotenv
-from hotkeys import RobustHotkeyManager
+from pynput import keyboard
 
 # Load environment variables at module level
 load_dotenv()
@@ -65,14 +66,19 @@ class AudioRecorder:
         return np.concatenate(self.frames, axis=0)
 
 
-def record_audio(filename, duration=None, stop_hotkey=["ctrl", "alt", "s"]):
+def send_notification(title, message):
+    """Send desktop notification on Linux systems."""
+    if os.name != 'nt':
+        subprocess.run(['notify-send', title, message])
+
+
+def record_audio(filename, duration=None):
     """
     Record audio for a specified duration or until a hotkey is pressed.
     
     Args:
         filename: The path where to save the audio file
         duration: Recording duration in seconds (None for manual stop)
-        stop_hotkey: List of key names for the hotkey to stop recording (default: Ctrl+S)
         
     Returns:
         Path to the saved audio file
@@ -80,38 +86,39 @@ def record_audio(filename, duration=None, stop_hotkey=["ctrl", "alt", "s"]):
     recorder = AudioRecorder(filename=filename)
     recording_active = True
     
-    # Create a function to handle the stop hotkey
     def stop_recording():
         nonlocal recording_active
         recording_active = False
-        print("Recording stopped by hotkey.")
-    
-    # Set up the hotkey manager
-    hotkey_manager = RobustHotkeyManager()
-    hotkey_manager.register("stop_recording", stop_hotkey, stop_recording)
-    hotkey_manager.start(debug=False, persistent=True)
-    
-    # Start recording
-    recorder.start_recording()
-    print(f"Recording... Press {'+'.join(stop_hotkey)} to stop.")
-    
-    try:
-        if duration is None:
-            # Record until hotkey is pressed
-            while recording_active:
-                time.sleep(0.1)  # Check every 100ms and keep CPU usage low
-        else:
-            # Record for specified duration or until hotkey is pressed
-            time_start = time.time()
-            while time.time() - time_start < duration and recording_active:
-                time.sleep(0.1)
-    finally:
-        # Stop the hotkey manager
-        hotkey_manager.stop()
-        
-        # Stop recording and save
-        recorder.stop_recording()
-        return recorder.save_to_file()
+        send_notification("AI Assistant", "Recording stopped")
+
+    with keyboard.GlobalHotKeys({
+        '<ctrl>+<alt>+q': stop_recording
+    }) as h:
+        try:
+            recorder.start_recording()
+            send_notification("Recording... ", "Press Ctrl+Alt+Q to stop")
+            
+            if duration is None:
+                # Record until hotkey is pressed
+                while recording_active:
+                    time.sleep(0.1)
+            else:
+                # Record for specified duration or until hotkey is pressed
+                time_start = time.time()
+                while time.time() - time_start < duration and recording_active:
+                    time.sleep(0.1)
+                    
+        except Exception as e:
+            send_notification("AI Assistant Error", f"Recording error: {str(e)}")
+            return None
+            
+        finally:
+            recorder.stop_recording()
+            try:
+                return recorder.save_to_file()
+            except Exception as e:
+                send_notification("AI Assistant Error", f"Error saving audio: {str(e)}")
+                return None
 
 
 if __name__ == "__main__":

@@ -1,82 +1,81 @@
 from gemini_API import GeminiAPI
 from deepgram_STT_API import get_text
-from hotkeys import RobustHotkeyManager
 from recorder import record_audio
 from dotenv import load_dotenv
-import time
+from pynput import keyboard
 import subprocess
 import os
 
-# getting enviroment variables
-GEMINI_API_KEY= os.getenv('GEMINI_API_KEY')
-DEEPGRAM_API_KEY= os.getenv('DEEPGRAM_API_KEY')
-AUDIO_FILE= os.getenv('AUDIO_FILE')
+# getting environment variables
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+DEEPGRAM_API_KEY = os.getenv('DEEPGRAM_API_KEY')
+AUDIO_FILE = os.getenv('AUDIO_FILE')
 
 
 def send_notification(title, message):
     if os.name != 'nt':
         subprocess.run(['notify-send', title, message])
-        
-    
-    
+
+
+def audio_transcription():
+    try:
+        transcription = get_text(API_KEY=DEEPGRAM_API_KEY, AUDIO_FILE=AUDIO_FILE)
+        if transcription:
+            return transcription
+        else:
+            send_notification("AI Assistant", "No transcription result")
+            return None
+    except Exception as e:
+        send_notification("AI Assistant Error", str(e))
+        return None
+
+
+def get_gemini_response(transcript):
+    try:
+        response = GeminiAPI.send_request(transcript, GEMINI_API_KEY=GEMINI_API_KEY)
+        if response:
+            return response
+        else:
+            send_notification("AI Assistant", "No response from Gemini")
+            return None
+    except Exception as e:
+        send_notification("AI Assistant Error", str(e))
+        return None
+
+
 def run_new_prompt():
     """Record audio, transcribe it, and get a response from Gemini."""
-    print("New Prompt started", "AI application has started a new Prompt")
-    
-    try:
-        # Record audio with ctrl+alt+s to stop
-        record_audio(filename=AUDIO_FILE, stop_hotkey=["ctrl", "alt", "s"])
-        
-        # Transcribe the audio
-        transcript = get_text(API_KEY=DEEPGRAM_API_KEY, AUDIO_FILE=AUDIO_FILE)
+    send_notification("Recording... ", "Press Ctrl+Alt+Q to stop")
+    record_audio(filename=AUDIO_FILE, duration=None)
 
-        try:
-            os.remove(AUDIO_FILE)
-            print("file removed")
-        finally:
-            pass
-        
-        if not transcript:
-            print("No transcript provided")
-            send_notification("AI Assistant", "No transcript detected")
-            return
-        
-        print("transcript: ", transcript)
-        
-        # Get response from Gemini
-        response = GeminiAPI.send_request(transcript, GEMINI_API_KEY=GEMINI_API_KEY)
-        print(response)
-        send_notification("AI Response", response)
-        print("prompt ended")
-        print("Press Ctrl + Alt + Win to start a new prompt")
-    except Exception as e:
-        print(f"Error in prompt processing: {e}")
+    send_notification("Recording complete,", " transcribing...")
+    transcription = audio_transcription()
+    os.remove(AUDIO_FILE)  # Clean up the audio file after transcription
+
+    if transcription is not None:
+        send_notification("Transcription complete,", "getting response...")
+        response = get_gemini_response(transcription)
+        if response:
+            send_notification("AI Response:", response)
+    return None
 
 
 def main():
     """Main function that sets up the hotkey manager and runs the program."""
-    print("AI Assistant starting...")
-    print("Press Ctrl+Alt+Win to start a new prompt")
+    send_notification("AI Assistant running...",  "Press Ctrl+Alt+N for new prompt, \nCtrl+C to quit")
     
-    # Create hotkey manager
-    hotkey_manager = RobustHotkeyManager()
-    hotkey_manager.register("new_prompt", ["ctrl", "alt", "win"], run_new_prompt)
-    hotkey_manager.start(debug=False, persistent=True)
-    
-    try:
-        print("AI Assistant is running. Press Ctrl+C to exit.")
-        while hotkey_manager.running:
-            time.sleep(0.1)
-    except KeyboardInterrupt:
-        print("\nExiting AI Assistant...")
-    finally:
-        # Make sure to clean up
-        hotkey_manager.stop()
+    with keyboard.GlobalHotKeys({
+        '<ctrl>+<alt>+n': run_new_prompt,
+    }) as h:
+        try:
+            h.join()
+        except KeyboardInterrupt:
+            send_notification("AI Assistant", "Shutting down...")
 
-    
+
 if __name__ == "__main__":
     load_dotenv()
     main()
-        
-        
-    
+
+
+
